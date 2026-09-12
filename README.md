@@ -84,7 +84,7 @@ logAnalyticsService/
 ├── logstash/
 │   └── pipeline/
 │       └── logstash.conf
-├── logs/                       # Generated at runtime;
+├── logs/                       # Generated at runtime;Need to be removed once after completion of project
 │   └── application.log
 ├── src/
 │   ├── main/
