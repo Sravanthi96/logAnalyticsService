@@ -2,28 +2,38 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
     container_name: log-demo-elasticsearch
+
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - xpack.security.enrollment.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+
     ports:
       - "9200:9200"
+
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
+
     healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health"]
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:9200/_cluster/health || exit 1"
+        ]
       interval: 10s
       timeout: 5s
-      retries: 12
+      retries: 20
 
   kibana:
     image: docker.elastic.co/kibana/kibana:9.5.3
     container_name: log-demo-kibana
+
     environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+
     ports:
       - "5601:5601"
+
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -31,10 +41,22 @@ services:
   logstash:
     image: docker.elastic.co/logstash/logstash:9.5.3
     container_name: log-demo-logstash
+
+    environment:
+      LS_JAVA_OPTS: "-Xms512m -Xmx512m"
+
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      AWS_REGION: "${AWS_REGION}"
+
     volumes:
       - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
-      - ./logs:/usr/share/logstash/app-logs:ro
       - logstash-data:/usr/share/logstash/data
+
+    ports:
+      - "5001:5000"
+      - "9600:9600"
+
     depends_on:
       elasticsearch:
         condition: service_healthy
