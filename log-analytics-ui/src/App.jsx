@@ -2,10 +2,42 @@ import { useState } from "react";
 import "./App.css";
 
 function App() {
-  const [year, setYear] = useState("2026");
-  const [month, setMonth] = useState("09");
-  const [day, setDay] = useState("13");
-  const [orderId, setOrderId] = useState("ORD-TCP-003");
+  const [year, setYear] = useState("");
+  const [month, setMonth] = useState("");
+  const [day, setDay] = useState("");
+  const [orderId, setOrderId] = useState("");
+
+  const currentYear = new Date().getFullYear();
+
+  const years = Array.from(
+    { length: 5 },
+    (_, index) => String(currentYear - index)
+  );
+
+  const months = [
+    { value: "01", label: "January" },
+    { value: "02", label: "February" },
+    { value: "03", label: "March" },
+    { value: "04", label: "April" },
+    { value: "05", label: "May" },
+    { value: "06", label: "June" },
+    { value: "07", label: "July" },
+    { value: "08", label: "August" },
+    { value: "09", label: "September" },
+    { value: "10", label: "October" },
+    { value: "11", label: "November" },
+    { value: "12", label: "December" },
+  ];
+
+  const numberOfDays =
+    year && month
+      ? new Date(Number(year), Number(month), 0).getDate()
+      : 31;
+
+  const days = Array.from(
+    { length: numberOfDays },
+    (_, index) => String(index + 1).padStart(2, "0")
+  );
 
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -47,8 +79,7 @@ function App() {
     <main className="page">
       <section className="container">
         <header>
-          <p className="eyebrow">AWS Athena + Spring Boot</p>
-          <h1>Application Log Analytics</h1>
+          <h1>Log Analytics</h1>
           <p className="subtitle">
             Search archived application logs using an order ID and date.
           </p>
@@ -57,29 +88,60 @@ function App() {
         <form className="search-form" onSubmit={searchLogs}>
           <label>
             Year
-            <input
+            <select
               value={year}
-              onChange={(event) => setYear(event.target.value)}
+              onChange={(event) => {
+                setYear(event.target.value);
+                setDay("");
+              }}
               required
-            />
+            >
+              <option value="">Select year</option>
+
+              {years.map((yearOption) => (
+                <option key={yearOption} value={yearOption}>
+                  {yearOption}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label>
             Month
-            <input
+            <select
               value={month}
-              onChange={(event) => setMonth(event.target.value)}
+              onChange={(event) => {
+                setMonth(event.target.value);
+                setDay("");
+              }}
               required
-            />
+            >
+              <option value="">Select month</option>
+
+              {months.map((monthOption) => (
+                <option key={monthOption.value} value={monthOption.value}>
+                  {monthOption.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label>
             Day
-            <input
+            <select
               value={day}
               onChange={(event) => setDay(event.target.value)}
               required
-            />
+              disabled={!year || !month}
+            >
+              <option value="">Select day</option>
+
+              {days.map((dayOption) => (
+                <option key={dayOption} value={dayOption}>
+                  {dayOption}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="order-field">
@@ -87,6 +149,7 @@ function App() {
             <input
               value={orderId}
               onChange={(event) => setOrderId(event.target.value)}
+              placeholder="Example: ORD-TCP-003"
               required
             />
           </label>

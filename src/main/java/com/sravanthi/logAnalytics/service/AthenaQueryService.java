@@ -48,7 +48,7 @@ public class AthenaQueryService {
                   AND month = '%s'
                   AND day = '%s'
                   AND order_id = '%s'
-                ORDER BY event_timestamp DESC
+                ORDER BY event_timestamp ASC
                 LIMIT 100
                 """.formatted(year, month, day, orderId);
 
