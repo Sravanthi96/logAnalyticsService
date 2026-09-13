@@ -1,5 +1,7 @@
 # Log Analytics Service
 
+> Final implementation: Spring Boot 4, TCP-based Logstash ingestion, Elasticsearch/Kibana, S3/Athena, and React.
+
 A locally runnable log-ingestion and analytics demonstration built with Java, Spring Boot, Logstash, Elasticsearch, Kibana, Amazon S3, Amazon Athena, and React.
 
 The application generates structured operational logs, supports real-time investigation in Kibana, archives logs in Amazon S3, queries archived data through Athena, and exposes query results through a REST API for display in a React interface.
@@ -9,33 +11,30 @@ The application generates structured operational logs, supports real-time invest
 | Capability | Status |
 | --- | --- |
 | Spring Boot application and health checks | Complete |
-| Structured JSON file logging | Complete |
+| Structured JSON logging | Complete |
 | INFO, WARN, and ERROR log generation | Complete |
 | Correlation ID and order ID enrichment with MDC | Complete |
 | Logstash ingestion | Complete |
 | Elasticsearch indexing | Complete |
 | Kibana search and filtering | Complete |
-| Amazon S3 archival | Planned |
-| Amazon Athena queries | Planned |
-| Athena REST API | Planned |
-| React log viewer | Planned |
+| Amazon S3 archival | Complete |
+| Amazon Athena queries | Complete |
+| Athena REST API | Complete |
+| React log viewer | Complete |
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     Client["Client / Test Request"] --> API["Spring Boot API"]
-    API --> File["Structured JSON Log File"]
-    File --> LS["Logstash"]
+    API -->|"JSON logs over TCP 5001"| LS["Logstash TCP input 5000"]
     LS --> ES["Elasticsearch"]
     ES --> KB["Kibana"]
-    LS -. "archive connector" .-> S3["Amazon S3"]
-    S3 -. "SQL over archived logs" .-> ATH["Amazon Athena"]
-    ATH -.-> REST["Spring Boot Athena REST API"]
-    REST -.-> UI["React Log Viewer"]
+    LS -->|"JSON archive"| S3["Amazon S3"]
+    S3 -->|"SQL over archived logs"| ATH["Amazon Athena"]
+    ATH --> REST["Spring Boot Athena REST API"]
+    REST --> UI["React Log Viewer"]
 ```
-
-Solid lines represent the currently implemented local pipeline. Dashed lines represent the planned cloud analytics and UI pipeline.
 
 ### Component responsibilities
 
@@ -43,8 +42,8 @@ Solid lines represent the currently implemented local pipeline. Dashed lines rep
 | --- | --- |
 | Spring Boot | Provides the demonstration API and emits structured operational events |
 | MDC | Adds `correlationId` and `orderId` to logs for request tracing |
-| Log file | Stores newline-delimited JSON events locally |
-| Logstash | Reads, parses, enriches, and forwards log events |
+| Logback TCP appender | Sends newline-delimited JSON events to host port `5001` |
+| Logstash | Receives JSON on container port `5000`, enriches it, and forwards it to two outputs |
 | Elasticsearch | Stores and indexes events for fast operational search |
 | Kibana | Searches, filters, and visualizes Elasticsearch data |
 | Amazon S3 | Provides durable archival storage for application logs |
@@ -55,16 +54,16 @@ Solid lines represent the currently implemented local pipeline. Dashed lines rep
 ## Technology stack
 
 - Java 21
-- Spring Boot 3.5.x
+- Spring Boot 4.x
 - Maven
 - SLF4J and Logback
 - Docker Compose
 - Logstash 9.5.3
 - Elasticsearch 9.5.3
 - Kibana 9.5.3
-- Amazon S3 and Athena in `us-west-1` (N. California), planned
-- AWS SDK for Java v2, planned
-- React with Vite, planned
+- Amazon S3 and Athena in `us-west-1` (N. California)
+- AWS SDK for Java v2
+- React with Vite
 
 ## Prerequisites
 
@@ -72,7 +71,7 @@ Solid lines represent the currently implemented local pipeline. Dashed lines rep
 - Docker Desktop with Docker Compose
 - Maven, or the included Maven Wrapper
 - Node.js LTS and npm for the React stage
-- AWS account and AWS CLI v2 for the S3/Athena stage
+- AWS account with least-privilege IAM credentials for S3, Athena, and Glue
 
 Allocate at least 4 GB of memory to Docker Desktop for the Elastic stack.
 
@@ -90,11 +89,16 @@ logAnalyticsService/
 │   ├── main/
 │   │   ├── java/com/sravanthi/loganalytics/
 │   │   │   ├── LogAnalyticsServiceApplication.java
-│   │   │   └── controller/
-│   │   │       └── LogGeneratorController.java
+│   │   │   ├── config/AthenaConfig.java
+│   │   │   ├── controller/
+│   │   │   │   ├── AthenaController.java
+│   │   │   │   └── LogGeneratorController.java
+│   │   │   └── service/AthenaQueryService.java
 │   │   └── resources/
-│   │       └── application.properties
+│   │       ├── application.properties
+│   │       └── logback-spring.xml
 │   └── test/
+├── log-analytics-ui/          # React/Vite log-search interface
 ├── pom.xml
 └── README.md
 ```
@@ -229,36 +233,32 @@ Recommended Discover columns are `@timestamp`, `level`, `message`, `orderId`, `c
 
 ## Logging configuration
 
-Spring Boot writes human-readable console output and structured Logstash JSON to `logs/application.log`:
+`logback-spring.xml` uses `LogstashTcpSocketAppender` to serialize application events as JSON and send them to `localhost:5001`. Docker Compose maps host port `5001` to Logstash container port `5000`. A local rolling JSON file is retained for development diagnostics.
 
-```properties
-spring.application.name=log-analytics-service
-logging.file.name=logs/application.log
-logging.structured.format.file=logstash
-logging.logback.rollingpolicy.max-file-size=10MB
-logging.logback.rollingpolicy.max-history=7
-management.endpoints.web.exposure.include=health,info
+```xml
+<appender name="LOGSTASH"
+          class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+    <destination>localhost:5001</destination>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+</appender>
 ```
 
-The generated `logs/` directory should be excluded from Git:
+The generated `logs/` directory and local AWS environment file are excluded from Git:
 
 ```gitignore
 logs/
+.env
 ```
 
 ## Logstash pipeline
 
-The file input already emits one event per line, so it uses the `json` codec rather than `json_lines`.
+The TCP input receives newline-delimited JSON from the Spring Boot Logback appender. Logstash sends every event to Elasticsearch for operational search and to S3 for historical analytics.
 
 ```conf
 input {
-  file {
-    path => "/usr/share/logstash/app-logs/application.log"
-    start_position => "beginning"
-    sincedb_path => "/dev/null"
-    stat_interval => "1 second"
-
-    codec => json {
+  tcp {
+    port => 5000
+    codec => json_lines {
       ecs_compatibility => "disabled"
     }
   }
@@ -278,13 +278,24 @@ output {
     index => "application-logs-%{+YYYY.MM.dd}"
   }
 
+  s3 {
+    region => "us-west-1"
+    bucket => "log-analytics-sravanthi-2026"
+    prefix => "application-logs/year=%{+YYYY}/month=%{+MM}/day=%{+dd}/"
+    rotation_strategy => "time"
+    time_file => 1
+    temporary_directory => "/usr/share/logstash/data/s3-temp"
+    validate_credentials_on_root_bucket => false
+    codec => json_lines
+  }
+
   stdout {
     codec => rubydebug
   }
 }
 ```
 
-`sincedb_path => "/dev/null"` is used only for the current demonstration workflow so a fresh Logstash container can reread the local file. A production deployment should persist `sincedb` state or use an agent/stream-based ingestion mechanism to prevent replay after restarts.
+Using TCP avoids host/container file synchronization issues and more closely represents a stream-based production ingestion connector. Port `5001` is used on the host because port `5000` may already be occupied on macOS.
 
 ## Correlation and traceability
 
@@ -303,36 +314,46 @@ finally {
 }
 ```
 
-This enables end-to-end searches in Kibana and, later, Athena and React without passing diagnostic fields into every logging statement.
+This enables end-to-end searches in Kibana, Athena, and React without passing diagnostic fields into every logging statement.
 
-## Planned S3 and Athena integration
+## S3 and Athena integration
 
-The cloud stage will use two private, encrypted S3 locations in `us-west-1`:
-
-- Application-log archive
-- Athena query results
-
-Athena will use the AWS Glue Data Catalog to define the JSON log schema. The Java service will use AWS SDK for Java v2 to start an Athena query, poll its execution status, retrieve results, and expose normalized log records through a REST endpoint.
-
-Planned API:
+One private S3 bucket in `us-west-1` uses separate prefixes for application-log archives and Athena query results:
 
 ```text
-GET /api/analytics/logs?level=ERROR&limit=100
+s3://log-analytics-sravanthi-2026/application-logs/year=YYYY/month=MM/day=DD/
+s3://log-analytics-sravanthi-2026/athena-results/
 ```
 
-Credentials will not be stored in source code. Local development will use an AWS CLI profile or temporary credentials, while a deployed application should use an IAM role with least-privilege access.
+The `log_analytics_db.application_logs` external table uses the AWS Glue Data Catalog and partition projection over the `year`, `month`, and `day` prefixes. The Java service uses AWS SDK for Java v2 to start an Athena query, poll its status, retrieve the result rows, and return them through:
 
-## Planned React interface
+```text
+GET /api/athena/logs?year=2026&month=09&day=13&orderId=ORD-TCP-003
+```
 
-The React application will call the Spring Boot Athena API and display:
+Local credentials are supplied through environment variables and are never stored in source code. A deployed application should use an IAM role with least-privilege access.
+
+## React interface
+
+The React application calls the Spring Boot Athena API and displays:
 
 - Timestamp
 - Log level
 - Message
 - Order ID
 - Correlation ID
-- Filters for level and search text
+- Date-partition and order-ID search fields
 - Loading, empty, and error states
+
+Run the interface locally:
+
+```bash
+cd log-analytics-ui
+npm install
+npm run dev
+```
+
+Then open [http://localhost:5173](http://localhost:5173).
 
 ## Deployment approach
 
@@ -370,10 +391,10 @@ Structured JSON makes diagnostic fields independently searchable and avoids rely
 
 ### No `application-logs-*` index
 
-Confirm that Logstash can see the mounted file:
+Confirm that the host-side TCP port is reachable:
 
 ```bash
-docker compose exec logstash ls -la /usr/share/logstash/app-logs
+nc -zv localhost 5001
 ```
 
 Inspect Logstash output:
@@ -382,13 +403,33 @@ Inspect Logstash output:
 docker compose logs --tail=100 logstash
 ```
 
-Ensure the file input uses:
+Ensure `compose.yaml` maps the host and container ports:
 
-```conf
-codec => json
+```yaml
+ports:
+  - "5001:5000"
 ```
 
-Do not use `json_lines` with the line-oriented file input.
+Ensure the Logstash input uses:
+
+```conf
+tcp {
+  port => 5000
+  codec => json_lines
+}
+```
+
+Restart Spring Boot after Logstash is ready so the TCP appender connects cleanly.
+
+### Athena REST API returns `TABLE_NOT_FOUND`
+
+- Confirm Athena, S3, and the Spring Boot AWS client all use `us-west-1`.
+- Run `SHOW TABLES IN log_analytics_db` in Athena.
+- Verify that `log_analytics_db.application_logs` exists in the regional Glue Data Catalog.
+
+### Athena REST API cannot load credentials
+
+The `.env` file is loaded by Docker Compose but not automatically by IntelliJ. Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` to the Spring Boot run configuration, or source `.env` before running the Maven Wrapper. Never commit or print credentials.
 
 ### Kibana shows no results
 
@@ -415,4 +456,3 @@ docker compose down -v
 - AWS root credentials and permanent secrets are never committed.
 - `.env`, IDE metadata, runtime logs, and credential files must be excluded from Git.
 - Local Elastic security is disabled only to simplify this isolated demonstration; production environments require authentication, TLS, authorization, and secret management.
-
