@@ -62,7 +62,7 @@ Solid lines represent the currently implemented local pipeline. Dashed lines rep
 - Logstash 9.5.3
 - Elasticsearch 9.5.3
 - Kibana 9.5.3
-- Amazon S3 and Athena, planned
+- Amazon S3 and Athena in `us-west-1` (N. California), planned
 - AWS SDK for Java v2, planned
 - React with Vite, planned
 
@@ -84,7 +84,7 @@ logAnalyticsService/
 ├── logstash/
 │   └── pipeline/
 │       └── logstash.conf
-├── logs/                       # Generated at runtime;Need to be removed once after completion of project
+├── logs/                       # Generated at runtime; excluded from Git
 │   └── application.log
 ├── src/
 │   ├── main/
